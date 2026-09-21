@@ -73,14 +73,59 @@
     position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     color:var(--text-dim);font-size:13px;font-family:'Consolas',monospace;background:var(--bg);
   }
+  #loginGate{
+    position:fixed;inset:0;z-index:9999;background:var(--bg);
+    display:flex;align-items:center;justify-content:center;
+  }
+  #loginGate .box{
+    width:100%;max-width:320px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:26px 24px;
+  }
+  #loginGate h2{margin:0 0 4px;font-size:16px;color:var(--text);}
+  #loginGate p{margin:0 0 18px;font-size:12px;color:var(--text-dim);}
+  #loginGate label{display:block;font-size:11.5px;color:var(--text-dim);margin:12px 0 5px;}
+  #loginGate input{
+    width:100%;padding:9px 10px;border-radius:6px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--text);font-family:inherit;font-size:13px;
+  }
+  #loginGate input:focus{outline:none;border-color:var(--amber-dim);}
+  #loginGate button{
+    width:100%;margin-top:18px;padding:10px;border:none;border-radius:6px;
+    background:var(--amber);color:var(--bg);font-weight:700;font-size:13px;cursor:pointer;
+    font-family:inherit;
+  }
+  #loginGate button:disabled{opacity:0.6;cursor:default;}
+  #loginGate .err{color:var(--red);font-size:11.5px;margin-top:10px;min-height:14px;}
+  .logoutbtn{
+    font-family:inherit;cursor:pointer;background:transparent;border:1px solid var(--line);
+    color:var(--text-dim);padding:6px 12px;border-radius:6px;font-size:11.5px;font-weight:600;
+    margin-left:6px;
+  }
+  .logoutbtn:hover{color:var(--red);border-color:var(--red);}
 </style>
 <!-- Firebase (cloud sync so evaluations are shared across every PC, not just one) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 </head>
 <body>
 
-  <div class="suitebar">
+  <div id="loginGate">
+    <div class="box">
+      <h2>QA Suite — Sign in</h2>
+      <p>Enter the team credentials to open the audit console.</p>
+      <form id="loginForm">
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" autocomplete="username" required>
+        <label for="loginPass">Password</label>
+        <input id="loginPass" type="password" autocomplete="current-password" required>
+        <button id="loginBtn" type="submit">Sign in</button>
+        <div class="err" id="loginErr"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="suitebar" style="display:none;" id="mainBar">
     <div class="brand">
       <h1>Service Assurance — QA Suite</h1>
       <span class="tag">v2.1</span>
@@ -92,9 +137,10 @@
       <button id="adminShortcut" class="adminbtn" title="Open Admin / Settings inside the Analytics Dashboard"><span class="gear">&#9881;</span>Admin / Settings</button>
     </div>
     <div class="sync-pill"><span class="sync-dot"></span><span id="syncLabel">Live-synced — audits reflect on the dashboard automatically</span></div>
+    <button class="logoutbtn" id="logoutBtn" title="Sign out">Sign out</button>
   </div>
 
-  <div class="stage">
+  <div class="stage" style="display:none;" id="mainStage">
     <div class="frame-wrap active" id="wrap-qa">
       <div class="loading" id="loading-qa">Loading QA Audit Console…</div>
     </div>
@@ -1265,7 +1311,63 @@ function bootApp(){
   try{ landing = QACORE.prefs().landingTab === "dashboard" ? "dashboard" : "qa"; }catch(e){}
   activateTab(landing);
 }
-QASYNC.pullInitial().then(bootApp).catch(bootApp);
+
+/* ========================= SIGN-IN GATE (Firebase Auth) =================
+   The QA console/dashboard/cloud data only become visible after a
+   successful email+password sign-in. If the Auth SDK itself fails to
+   load (e.g. blocked network), fail open rather than locking everyone
+   out — the app still works exactly as before, just without the gate. */
+var loginGateEl  = document.getElementById("loginGate");
+var mainBarEl    = document.getElementById("mainBar");
+var mainStageEl  = document.getElementById("mainStage");
+var loginFormEl  = document.getElementById("loginForm");
+var loginErrEl   = document.getElementById("loginErr");
+var loginBtnEl   = document.getElementById("loginBtn");
+var logoutBtnEl  = document.getElementById("logoutBtn");
+
+function showApp(){
+  loginGateEl.style.display = "none";
+  mainBarEl.style.display = "flex";
+  mainStageEl.style.display = "block";
+}
+function showLogin(){
+  loginGateEl.style.display = "flex";
+  mainBarEl.style.display = "none";
+  mainStageEl.style.display = "none";
+}
+
+var _booted = false;
+function bootOnce(){
+  if(_booted) return;
+  _booted = true;
+  QASYNC.pullInitial().then(bootApp).catch(bootApp);
+}
+
+try{
+  firebase.auth().onAuthStateChanged(function(user){
+    if(user){ showApp(); bootOnce(); }
+    else{ showLogin(); }
+  });
+}catch(e){
+  console.warn("Auth unavailable, opening app without sign-in gate", e);
+  showApp(); bootOnce();
+}
+
+loginFormEl.addEventListener("submit", function(e){
+  e.preventDefault();
+  var email = document.getElementById("loginEmail").value.trim();
+  var pass  = document.getElementById("loginPass").value;
+  loginErrEl.textContent = "";
+  loginBtnEl.disabled = true;
+  loginBtnEl.textContent = "Signing in…";
+  firebase.auth().signInWithEmailAndPassword(email, pass)
+    .catch(function(){ loginErrEl.textContent = "Incorrect email or password."; })
+    .then(function(){ loginBtnEl.disabled = false; loginBtnEl.textContent = "Sign in"; });
+});
+
+logoutBtnEl.addEventListener("click", function(){
+  try{ firebase.auth().signOut(); }catch(e){}
+});
 </script>
 </body>
 </html>
